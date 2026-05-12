@@ -1,0 +1,5 @@
+# Ignore generated artifacts
+*.npy
+comprehensive_dialogue_umap.csv
+results/
+sweep_logs/

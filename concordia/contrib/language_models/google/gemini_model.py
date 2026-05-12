@@ -98,19 +98,19 @@ DEFAULT_HISTORY = (
 DEFAULT_SAFETY_SETTINGS = (
     types.SafetySetting(
         category='HARM_CATEGORY_HARASSMENT',
-        threshold='BLOCK_MEDIUM_AND_ABOVE',
+        threshold='BLOCK_NONE',
     ),
     types.SafetySetting(
         category='HARM_CATEGORY_HATE_SPEECH',
-        threshold='BLOCK_MEDIUM_AND_ABOVE',
+        threshold='BLOCK_NONE',
     ),
     types.SafetySetting(
         category='HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        threshold='BLOCK_MEDIUM_AND_ABOVE',
+        threshold='BLOCK_NONE',
     ),
     types.SafetySetting(
         category='HARM_CATEGORY_DANGEROUS_CONTENT',
-        threshold='BLOCK_MEDIUM_AND_ABOVE',
+        threshold='BLOCK_NONE',
     ),
 )
 
@@ -134,6 +134,9 @@ class GeminiModel(language_model.LanguageModel):
       measurements: measurements_lib.Measurements | None = None,
       channel: str = language_model.DEFAULT_STATS_CHANNEL,
       sleep_periodically: bool = False,
+      thinking_budget: int | None = None,
+      temperature: float | None = None,
+      delay_seconds: float = 0.0,
   ) -> None:
     """Initializes the Gemini language model.
 
@@ -155,6 +158,10 @@ class GeminiModel(language_model.LanguageModel):
       channel: The channel to write the statistics to.
       sleep_periodically: Whether to sleep between API calls to avoid rate
         limits.
+      thinking_budget: Optional budget for thinking models (e.g. 0 to disable).
+      temperature: Optional default temperature to use if not specified in calls.
+      delay_seconds: Sleep this many seconds after each API call for rate
+        limiting. Default 0 (no delay).
     """
     if project and api_key:
       raise ValueError(
@@ -168,7 +175,11 @@ class GeminiModel(language_model.LanguageModel):
             'location is required when using Vertex AI (project is set).'
         )
       self._client = genai.Client(
-          vertexai=True, project=project, location=location
+          vertexai=True, project=project, location=location,
+          http_options=types.HttpOptions(
+              timeout=60000,
+              retry_options=types.HttpRetryOptions(attempts=3, max_delay=15.0)
+          )
       )
     else:
       if api_key is None:
@@ -178,7 +189,13 @@ class GeminiModel(language_model.LanguageModel):
               'GEMINI_API_KEY not found. Please provide it via the api_key '
               'parameter or set the GEMINI_API_KEY environment variable.'
           )
-      self._client = genai.Client(api_key=api_key)
+      self._client = genai.Client(
+          api_key=api_key,
+          http_options=types.HttpOptions(
+              timeout=60000,
+              retry_options=types.HttpRetryOptions(attempts=3, max_delay=15.0)
+          )
+      )
 
     self._model_name = model_name
     self._safety_settings = list(safety_settings)
@@ -188,6 +205,9 @@ class GeminiModel(language_model.LanguageModel):
 
     self._calls_between_sleeping = 10
     self._n_calls = 0
+    self._thinking_budget = thinking_budget
+    self._temperature = temperature
+    self._delay_seconds = delay_seconds
 
   def _strip_markdown(self, text_to_strip: str) -> str:
     """Remove markdown code blocks from the text."""
@@ -216,8 +236,12 @@ class GeminiModel(language_model.LanguageModel):
       logging.info('Sleeping for 10 seconds...')
       time.sleep(10)
 
-    config = types.GenerateContentConfig(
-        temperature=temperature,
+    # Use instance default if not overridden in call
+    effective_temperature = temperature if temperature != language_model.DEFAULT_TEMPERATURE else (self._temperature if self._temperature is not None else temperature)
+    effective_temperature = effective_temperature if effective_temperature is not None else temperature
+
+    config_kwargs = dict(
+        temperature=effective_temperature,
         max_output_tokens=max_tokens,
         stop_sequences=list(terminators),
         candidate_count=1,
@@ -227,6 +251,10 @@ class GeminiModel(language_model.LanguageModel):
         safety_settings=self._safety_settings,
         seed=seed,
     )
+    if self._thinking_budget is not None:
+        config_kwargs['thinking_config'] = types.ThinkingConfig(thinking_budget=self._thinking_budget)
+
+    config = types.GenerateContentConfig(**config_kwargs)
 
     chat = self._client.chats.create(
         model=self._model_name,
@@ -235,14 +263,20 @@ class GeminiModel(language_model.LanguageModel):
     )
     sample = chat.send_message(message=prompt)
 
+    # Simple per-call rate limiting
+    if self._delay_seconds > 0:
+      time.sleep(self._delay_seconds)
+
     try:
       response = sample.candidates[0].content.parts[0].text
-    except (ValueError, IndexError, AttributeError) as e:
+    except (ValueError, IndexError, AttributeError, TypeError) as e:
       logging.error('An error occurred: %s', e)
       logging.debug('prompt: %s', prompt)
       logging.debug('sample: %s', sample)
       response = ''
-      response = self._strip_markdown(response)
+    if response is None:
+      response = ''
+    response = self._strip_markdown(response)
     if self._measurements is not None:
       self._measurements.publish_datum(
           self._channel, {'raw_text_length': len(response)}

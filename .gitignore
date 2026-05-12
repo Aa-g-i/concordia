@@ -26,3 +26,19 @@ __pycache__/
 
 # Type checking
 .pytype
+
+# Deliberate Integration Logs and Artifacts
+concordia/deliberate_integration/sweep_logs/
+concordia/deliberate_integration/*.png
+concordia/deliberate_integration/*.npy
+concordia/deliberate_integration/comprehensive_analysis_metrics.csv
+
+# Local Analysis and Plot Outputs
+*.npy
+*embeddings.npy
+*umap.csv
+concordia_DL_output/
+concordia_multistage_output/
+concordia_output_*/
+tmp_extracted/
+

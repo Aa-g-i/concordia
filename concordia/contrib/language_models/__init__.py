@@ -64,6 +64,7 @@ def language_model_setup(
     api_key: str | None = None,
     device: str | None = None,
     disable_language_model: bool = False,
+    **kwargs,
 ) -> language_model.LanguageModel:
   """Get the wrapped language model.
 
@@ -75,6 +76,7 @@ def language_model_setup(
     disable_language_model: If True then disable the language model. This uses a
       model that returns an empty string whenever asked for a free text response
       and a randome option when asked for a choice.
+    **kwargs: Additional arguments to pass to the model class constructor.
 
   Returns:
     The wrapped language model.
@@ -82,15 +84,17 @@ def language_model_setup(
   if disable_language_model:
     return no_language_model.NoLanguageModel()
 
-  kwargs = {'model_name': model_name}
+  model_kwargs = {'model_name': model_name}
   if api_key is not None:
-    kwargs['api_key'] = api_key
+    model_kwargs['api_key'] = api_key
   if device is not None:
-    kwargs['device'] = device
+    model_kwargs['device'] = device
+    
+  model_kwargs.update(kwargs)
 
   try:
     model_path = _REGISTRY[api_type]
   except KeyError as error:
     raise ValueError(f'Unrecognized api_type: {api_type}') from error
   cls = _import_model(model_path)
-  return cls(**kwargs)  # pytype: disable=wrong-keyword-args
+  return cls(**model_kwargs)  # pytype: disable=wrong-keyword-args
