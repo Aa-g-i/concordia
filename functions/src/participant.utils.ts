@@ -1263,6 +1263,29 @@ function buildTargetValuesForParticipant(
     }
   }
 
+  if (participant.variableMap) {
+    for (const [varName, varValue] of Object.entries(participant.variableMap)) {
+      try {
+        const parsed = JSON.parse(varValue);
+        if (typeof parsed === 'object' && parsed !== null) {
+          for (const [key, val] of Object.entries(parsed)) {
+            const targetKey = getConditionTargetKey({
+              stageId: '___VARIABLES___',
+              questionId: `${varName}.${key}`,
+            });
+            targetValues[targetKey] = val;
+          }
+        }
+      } catch (e) {
+        const targetKey = getConditionTargetKey({
+          stageId: '___VARIABLES___',
+          questionId: varName,
+        });
+        targetValues[targetKey] = varValue;
+      }
+    }
+  }
+
   return targetValues;
 }
 
